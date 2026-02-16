@@ -131,6 +131,13 @@ public class ConfigService
                                                # Windows metadata
                                                - "**/*:Zone.Identifier"     # Windows download zone markers
 
+                                             headlessExclusions:
+                                               - ../BepInEx/plugins/com.swiftxp.spt.showmethemoney/**
+                                               - ../BepInEx/plugins/HollywoodFX/**
+                                               - ../BepInEx/plugins/HollywoodGraphics/**
+                                               - ../BepInEx/plugins/ContinuousHealing.dll
+                                               - ../BepInEx/plugins/HealingAutoCancel.dll
+
                                              # ═══════════════════════════════════════════════════════════════════════
                                              # GLOB PATTERN QUICK REFERENCE
                                              # ═══════════════════════════════════════════════════════════════════════
