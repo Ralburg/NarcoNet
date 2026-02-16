@@ -161,6 +161,11 @@ public class NarcoNetHttpListener(
         _config = config;
         _modVersion = modVersion;
         _isInitialized = true;
+
+        // ADD THESE LINES ↓
+        var summary = config.SyncPaths.GetSyncSummary();
+        logger.LogInformation("Sync Path Summary: {Summary}", summary);
+
         logger.LogDebug("HttpListener initialized successfully (_isInitialized={IsInit})", _isInitialized);
     }
 
@@ -180,6 +185,9 @@ public class NarcoNetHttpListener(
     {
         string? version = context.Request.Headers["narconet-version"].FirstOrDefault();
 
+        // ADD THIS LINE ↓
+        ClientType clientType = GetClientTypeFromRequest(context);
+
         string json;
         if (!string.IsNullOrEmpty(version) && FallbackSyncPaths.ContainsKey(version))
         {
@@ -187,16 +195,27 @@ public class NarcoNetHttpListener(
         }
         else
         {
-            var syncPaths = _config!.SyncPaths.Select(sp => new
-            {
-                sp.Name,
-                Path = PathHelper.ToWindowsPath(sp.Path),
-                sp.Enabled,
-                sp.Enforced,
-                sp.Silent,
-                sp.RestartRequired
-            }).ToList();
-            json = JsonSerializer.Serialize(syncPaths);
+            // REPLACE THIS ENTIRE SECTION ↓
+            var filteredPaths = _config!.SyncPaths
+                .FilterByClientType(clientType, logger)  // ADD: Filter by client type
+                .Select(sp => new
+                {
+                    sp.Name,
+                    Path = PathHelper.ToWindowsPath(sp.Path),
+                    sp.Enabled,
+                    sp.Enforced,
+                    sp.Silent,
+                    sp.RestartRequired,
+                    ClientTypes = (int)sp.ClientTypes,  // ADD: Include for debugging
+                    sp.Category  // ADD: Include category
+                }).ToList();
+
+            logger.LogInformation(
+                "Returning {Count} sync paths for {ClientType} client",
+                filteredPaths.Count,
+                clientType);
+
+            json = JsonSerializer.Serialize(filteredPaths);
         }
 
         byte[] jsonBytes = System.Text.Encoding.UTF8.GetBytes(json);
@@ -222,8 +241,12 @@ public class NarcoNetHttpListener(
     private async Task HandleGetHashes(HttpContext context)
     {
         string? version = context.Request.Headers["narconet-version"].FirstOrDefault();
+
+        // ADD THIS LINE ↓
+        ClientType clientType = GetClientTypeFromRequest(context);
+
 #if NARCONET_DEBUG_LOGGING
-        logger.LogDebug($"HandleGetHashes: Client version: {version ?? "unknown"}");
+        logger.LogDebug($"HandleGetHashes: Client version: {version ?? "unknown"}, Type: {clientType}");
 #endif
 
         string json;
@@ -238,11 +261,9 @@ public class NarcoNetHttpListener(
         {
             StringValues pathsParam = context.Request.Query["path"];
 
-            // Only hash enabled or enforced sync paths
             List<SyncPath> pathsToHash;
             if (pathsParam.Count > 0)
             {
-                // Client requested specific paths - only hash those (if enabled or enforced)
                 List<string?> requestedPaths = pathsParam.ToList();
                 logger.LogDebug("Client requested {Count} specific paths", requestedPaths.Count);
 #if NARCONET_DEBUG_LOGGING
@@ -253,19 +274,26 @@ public class NarcoNetHttpListener(
 #endif
                 pathsToHash = _config!.SyncPaths
                     .Where(sp => (sp.Enabled || sp.Enforced) && requestedPaths.Contains(sp.Path))
+                    .FilterByClientType(clientType, logger)  // ADD THIS LINE
                     .ToList();
-                logger.LogDebug("Hashing {Count} enabled/enforced paths", pathsToHash.Count);
+                logger.LogDebug("Hashing {Count} enabled/enforced paths for {ClientType} client",
+                    pathsToHash.Count,
+                    clientType);
             }
             else
             {
-                // No specific paths requested - hash all enabled/enforced paths
-                logger.LogDebug("Hashing all enabled/enforced sync paths");
+                logger.LogDebug("Hashing all enabled/enforced sync paths for {ClientType} client", clientType);
                 pathsToHash = _config!.SyncPaths
                     .Where(sp => sp.Enabled || sp.Enforced)
+                    .FilterByClientType(clientType, logger)  // ADD THIS LINE
                     .ToList();
             }
 
-            Dictionary<string, Dictionary<string, ModFile>> hashResults = await syncService.HashModFilesAsync(pathsToHash, _config, context.RequestAborted);
+            Dictionary<string, Dictionary<string, ModFile>> hashResults = await syncService.HashModFilesAsync(
+                pathsToHash,
+                _config,
+                clientType,  // ADD THIS - we already have it from GetClientTypeFromRequest
+                context.RequestAborted);
 
             // Log total file counts per path
             foreach (var pathHash in hashResults)
@@ -393,5 +421,20 @@ public class NarcoNetHttpListener(
             context.Response.StatusCode = 500;
             await context.Response.WriteAsync($"NarcoNet: Error reading '{filePath}'\n{ex}");
         }
+    }
+
+    /// <summary>
+    /// Extract client type from HTTP request headers
+    /// </summary>
+    private ClientType GetClientTypeFromRequest(HttpContext context)
+    {
+        string? clientTypeHeader = context.Request.Headers["X-Client-Type"].FirstOrDefault();
+        ClientType clientType = ClientTypeExtensions.ParseClientType(clientTypeHeader);
+
+        logger.LogDebug("Client identified as: {ClientType} (header value: '{HeaderValue}')",
+            clientType,
+            clientTypeHeader ?? "not provided");
+
+        return clientType;
     }
 }

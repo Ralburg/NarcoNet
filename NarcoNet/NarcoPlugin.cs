@@ -60,9 +60,9 @@ public class NarcoPlugin : BaseUnityPlugin, IDisposable
     /// </summary>
     public NarcoPlugin()
     {
-        _server = new ServerModule(Info.Metadata.Version);
-        _uiService = new ClientUIService();
         _configService = new ClientConfigService();
+        _server = new ServerModule(Info.Metadata.Version, _configService);
+        _uiService = new ClientUIService();
         _syncService = new ClientSyncService(Logger, _server);
         _initService = new ClientInitializationService();
     }

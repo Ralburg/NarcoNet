@@ -7,6 +7,7 @@ using NarcoNet.Server.Utilities;
 using NarcoNet.Utilities;
 
 using SPTarkov.DI.Annotations;
+using SPTarkov.Server.Core.Models.Eft.Dialog;
 
 namespace NarcoNet.Server.Services;
 
@@ -29,7 +30,11 @@ public class SyncService
     /// <summary>
     ///     Get all files in a directory recursively, respecting exclusions
     /// </summary>
-    private async Task<List<string>> GetFilesInDirectoryAsync(string baseDir, string dir, NarcoNetConfig config)
+    private async Task<List<string>> GetFilesInDirectoryAsync(
+        string baseDir,
+        string dir,
+        NarcoNetConfig config,
+        ClientType clientType)  // ✅ Added parameter
     {
         if (!Directory.Exists(dir))
         {
@@ -43,16 +48,21 @@ public class SyncService
             return [dir];
         }
 
-        List<string> files =
-        [
-        ];
+        List<string> files = [];
         DirectoryInfo dirInfo = new(dir);
+
+        // ✅ Calculate once at the top (more efficient)
+        List<string>? additionalExclusions = clientType == ClientType.Headless
+            ? config.HeadlessExclusions
+            : null;
 
         // Get files in current directory
         foreach (FileInfo file in dirInfo.GetFiles())
         {
             string filePath = file.FullName;
-            if (IsExcluded(filePath, config.Exclusions, baseDir))
+
+            // ✅ Use the pre-calculated value
+            if (IsExcluded(filePath, config.Exclusions, baseDir, additionalExclusions))
             {
                 continue;
             }
@@ -64,12 +74,15 @@ public class SyncService
         foreach (DirectoryInfo subDir in dirInfo.GetDirectories())
         {
             string subDirPath = subDir.FullName;
-            if (IsExcluded(subDirPath, config.Exclusions, baseDir))
+
+            // ✅ Use the pre-calculated value
+            if (IsExcluded(subDirPath, config.Exclusions, baseDir, additionalExclusions))
             {
                 continue;
             }
 
-            List<string> subFiles = await GetFilesInDirectoryAsync(baseDir, subDirPath, config);
+            // ✅ CRITICAL: Pass clientType to recursive call
+            List<string> subFiles = await GetFilesInDirectoryAsync(baseDir, subDirPath, config, clientType);
             files.AddRange(subFiles);
         }
 
@@ -79,7 +92,7 @@ public class SyncService
     /// <summary>
     ///     Check if a path is excluded based on exclusion patterns
     /// </summary>
-    private bool IsExcluded(string path, List<string> exclusions, string? baseDir = null)
+    private bool IsExcluded(string path, List<string> exclusions, string? baseDir = null, List<string>? additionalExclusions = null)
     {
         // Convert absolute path to relative path from server root for pattern matching
         string relativePath;
@@ -93,7 +106,20 @@ public class SyncService
         }
 
         string unixPath = PathHelper.ToUnixPath(relativePath);
-        return exclusions.Any(pattern => GlobMatcher.Matches(unixPath, pattern));
+
+        // Check regular exclusions
+        if (exclusions.Any(pattern => GlobMatcher.Matches(unixPath, pattern)))
+        {
+            return true;
+        }
+
+        // Check additional exclusions (e.g., headless-specific)
+        if (additionalExclusions != null && additionalExclusions.Any(pattern => GlobMatcher.Matches(unixPath, pattern)))
+        {
+            return true;
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -143,6 +169,7 @@ public class SyncService
     public async Task<Dictionary<string, Dictionary<string, ModFile>>> HashModFilesAsync(
         List<SyncPath> syncPaths,
         NarcoNetConfig config,
+        ClientType clientType,
         CancellationToken cancellationToken = default)
     {
         Dictionary<string, Dictionary<string, ModFile>> result = new();
@@ -157,7 +184,7 @@ public class SyncService
         foreach (SyncPath syncPath in syncPaths)
         {
             string fullPath = Path.GetFullPath(syncPath.Path);
-            List<string> files = await GetFilesInDirectoryAsync(baseDir, fullPath, config);
+            List<string> files = await GetFilesInDirectoryAsync(baseDir, fullPath, config, clientType);
 #if NARCONET_DEBUG_LOGGING
             _logger.LogDebug($"  {syncPath.Path}: Found {files.Count} files");
 #endif
@@ -217,6 +244,7 @@ public class SyncService
         List<SyncPath> syncPaths,
         NarcoNetConfig config,
         long sequenceNumber,
+        ClientType clientType,
         CancellationToken cancellationToken = default)
     {
         Dictionary<string, FileMetadata> files = new();
@@ -225,7 +253,7 @@ public class SyncService
         foreach (SyncPath syncPath in syncPaths)
         {
             string fullPath = Path.GetFullPath(syncPath.Path);
-            List<string> fileList = await GetFilesInDirectoryAsync(baseDir, fullPath, config);
+            List<string> fileList = await GetFilesInDirectoryAsync(baseDir, fullPath, config, clientType);
 
             foreach (string file in fileList)
             {
@@ -398,6 +426,7 @@ public class SyncService
             syncPaths, 
             config, 
             changeLog.CurrentSequence,
+            ClientType.Regular,
             cancellationToken);
 
         // Detect changes between snapshots

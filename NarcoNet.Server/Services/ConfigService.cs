@@ -190,7 +190,7 @@ public class ConfigService
             await File.WriteAllTextAsync(configPath, DefaultYamlConfig);
         }
 
-        (List<SyncPath> rawSyncPaths, List<string> exclusions) = await LoadConfigFileAsync(configPath);
+        (List<SyncPath> rawSyncPaths, List<string> exclusions, List<string> headlessExclusions) = await LoadConfigFileAsync(configPath);
 
         ValidateConfig(rawSyncPaths, exclusions, configPath);
 
@@ -219,7 +219,8 @@ public class ConfigService
         return new NarcoNetConfig
         {
             SyncPaths = syncPaths,
-            Exclusions = exclusions
+            Exclusions = exclusions,
+            HeadlessExclusions = headlessExclusions
         };
     }
 
@@ -248,7 +249,7 @@ public class ConfigService
     /// <summary>
     /// Load config file based on extension
     /// </summary>
-    private async Task<(List<SyncPath> syncPaths, List<string> exclusions)> LoadConfigFileAsync(string configPath)
+    private async Task<(List<SyncPath> syncPaths, List<string> exclusions, List<string> headlessExclusions)> LoadConfigFileAsync(string configPath)
     {
         string extension = Path.GetExtension(configPath).ToLowerInvariant();
         string configText = await File.ReadAllTextAsync(configPath);
@@ -264,7 +265,7 @@ public class ConfigService
     /// <summary>
     /// Load YAML configuration
     /// </summary>
-    private (List<SyncPath>, List<string>) LoadYamlConfig(string yamlContent)
+    private (List<SyncPath>, List<string>, List<string>) LoadYamlConfig(string yamlContent)
     {
         IDeserializer deserializer = new DeserializerBuilder()
             .WithNamingConvention(CamelCaseNamingConvention.Instance)
@@ -353,14 +354,15 @@ public class ConfigService
         }
 
         List<string> exclusions = config.Exclusions ?? [];
+        List<string> headlessExclusions = config.HeadlessExclusions ?? [];
 
-        return (syncPaths, exclusions);
+        return (syncPaths, exclusions, headlessExclusions);
     }
 
     /// <summary>
     /// Load JSON configuration
     /// </summary>
-    private (List<SyncPath>, List<string>) LoadJsonConfig(string jsonContent)
+    private (List<SyncPath>, List<string>, List<string>) LoadJsonConfig(string jsonContent)
     {
         JsonNode? jsonNode = JsonNode.Parse(jsonContent);
         JsonArray? syncPathsNode = jsonNode?["syncPaths"]?.AsArray();
@@ -412,7 +414,20 @@ public class ConfigService
             }
         }
 
-        return (rawSyncPaths, exclusions);
+        JsonArray? headlessExclusionsNode = jsonNode?["headlessExclusions"]?.AsArray();
+        var headlessExclusions = new List<string>();
+        if (headlessExclusionsNode != null)
+        {
+            foreach (JsonNode? node in headlessExclusionsNode)
+            {
+                if (node is JsonValue)
+                {
+                    headlessExclusions.Add(node.GetValue<string>());
+                }
+            }
+        }
+
+        return (rawSyncPaths, exclusions, headlessExclusions);
     }
 
     /// <summary>
@@ -466,5 +481,6 @@ public class ConfigService
         public List<object>? SyncPaths { get; set; }
         public List<string>? Exclusions { get; set; }
         // ReSharper restore UnusedAutoPropertyAccessor.Local
+        public List<string>? HeadlessExclusions { get; set; }
     }
 }

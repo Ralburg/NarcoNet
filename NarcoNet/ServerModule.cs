@@ -1,6 +1,7 @@
 using System.Net.Http;
 
 using NarcoNet.Models;
+using NarcoNet.Services;
 using NarcoNet.Utilities;
 
 using SPT.Common.Http;
@@ -11,7 +12,7 @@ namespace NarcoNet;
 /// <summary>
 ///     Handles communication with the NarcoNet server
 /// </summary>
-public class ServerModule(Version pluginVersion)
+public class ServerModule(Version pluginVersion, IClientConfigService configService)
 {
     private async Task<string> GetJsonTask(string jsonPath)
     {
@@ -19,6 +20,7 @@ public class ServerModule(Version pluginVersion)
         {
             using HttpClient client = new();
             client.DefaultRequestHeaders.Add("narconet-version", pluginVersion.ToString());
+            AddClientTypeHeader(client);
             client.Timeout = TimeSpan.FromMinutes(3);
 #if NARCONET_DEBUG_LOGGING
             NarcoPlugin.Logger.LogDebug($"GetJsonTask: Requesting {RequestHandler.Host}{jsonPath}");
@@ -51,6 +53,19 @@ public class ServerModule(Version pluginVersion)
         }
     }
 
+    /// <summary>
+    /// Add client type identification header to HttpClient
+    /// </summary>
+    private void AddClientTypeHeader(HttpClient client)
+    {
+        bool isHeadless = configService.IsHeadless();
+        string clientType = isHeadless ? "headless" : "regular";
+
+        client.DefaultRequestHeaders.Add("X-Client-Type", clientType);
+
+        NarcoPlugin.Logger.LogDebug($"Added X-Client-Type header: {clientType}");
+    }
+
     internal async Task DownloadFile(string file, string path, SemaphoreSlim limiter, CancellationToken cancellationToken, string? localPath = null)
     {
         if (cancellationToken.IsCancellationRequested)
@@ -72,6 +87,8 @@ public class ServerModule(Version pluginVersion)
             {
                 using (HttpClient client = new())
                 {
+                    AddClientTypeHeader(client);
+
                     if (retryCount > 0)
                     {
                         client.Timeout = TimeSpan.FromMinutes(3 * retryCount);
